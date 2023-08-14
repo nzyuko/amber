@@ -1,4 +1,4 @@
-module github.com/EgeBalci/amber
+module github.com/nzyuko/amber
 
 go 1.15
 
